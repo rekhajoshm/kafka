@@ -960,7 +960,7 @@ public class ConfigDef {
     }
 
     /**
-     * Get a list of configs sorted into "natural" order: listing required fields first, then
+     * Get a list of all configs sorted into "natural" order: listing required fields first, then
      * ordering by importance, and finally by name.
      */
     private List<ConfigKey> sortedConfigs() {
