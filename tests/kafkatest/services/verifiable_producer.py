@@ -16,19 +16,22 @@
 import json
 import os
 import signal
-import subprocess
 import time
 
 from ducktape.services.background_thread import BackgroundThreadService
+from ducktape.cluster.remoteaccount import RemoteCommandError
+from ducktape.utils.util import wait_until
 
 from kafkatest.directory_layout.kafka_path import KafkaPathResolverMixin, TOOLS_JAR_NAME, TOOLS_DEPENDANT_TEST_LIBS_JAR_NAME
 from kafkatest.utils import is_int, is_int_with_prefix
-from kafkatest.version import TRUNK, LATEST_0_8_2
+from kafkatest.version import DEV_BRANCH, LATEST_0_8_2
+from kafkatest.utils.remote_account import line_count
 
 
 class VerifiableProducer(KafkaPathResolverMixin, BackgroundThreadService):
     PERSISTENT_ROOT = "/mnt/verifiable_producer"
     STDOUT_CAPTURE = os.path.join(PERSISTENT_ROOT, "verifiable_producer.stdout")
+    STDERR_CAPTURE = os.path.join(PERSISTENT_ROOT, "verifiable_producer.stderr")
     LOG_DIR = os.path.join(PERSISTENT_ROOT, "logs")
     LOG_FILE = os.path.join(LOG_DIR, "verifiable_producer.log")
     LOG4J_CONFIG = os.path.join(PERSISTENT_ROOT, "tools-log4j.properties")
@@ -38,14 +41,17 @@ class VerifiableProducer(KafkaPathResolverMixin, BackgroundThreadService):
         "verifiable_producer_stdout": {
             "path": STDOUT_CAPTURE,
             "collect_default": False},
+        "verifiable_producer_stderr": {
+            "path": STDERR_CAPTURE,
+            "collect_default": False},
         "verifiable_producer_log": {
             "path": LOG_FILE,
             "collect_default": True}
         }
 
     def __init__(self, context, num_nodes, kafka, topic, max_messages=-1, throughput=100000,
-                 message_validator=is_int, compression_types=None, version=TRUNK, acks=None,
-                 stop_timeout_sec=150):
+                 message_validator=is_int, compression_types=None, version=DEV_BRANCH, acks=None,
+                 stop_timeout_sec=150, request_timeout_sec=30, log_level="INFO"):
         """
         :param max_messages is a number of messages to be produced per producer
         :param message_validator checks for an expected format of messages produced. There are
@@ -58,6 +64,7 @@ class VerifiableProducer(KafkaPathResolverMixin, BackgroundThreadService):
         compression types, one per producer (could be "none").
         """
         super(VerifiableProducer, self).__init__(context, num_nodes)
+        self.log_level = log_level
 
         self.kafka = kafka
         self.topic = topic
@@ -76,10 +83,7 @@ class VerifiableProducer(KafkaPathResolverMixin, BackgroundThreadService):
         self.clean_shutdown_nodes = set()
         self.acks = acks
         self.stop_timeout_sec = stop_timeout_sec
-
-    @property
-    def security_config(self):
-        return self.kafka.security_config.client_config()
+        self.request_timeout_sec = request_timeout_sec
 
     def prop_file(self, node):
         idx = self.idx(node)
@@ -98,15 +102,20 @@ class VerifiableProducer(KafkaPathResolverMixin, BackgroundThreadService):
         log_config = self.render('tools_log4j.properties', log_file=VerifiableProducer.LOG_FILE)
         node.account.create_file(VerifiableProducer.LOG4J_CONFIG, log_config)
 
+        # Configure security
+        self.security_config = self.kafka.security_config.client_config(node=node)
+        self.security_config.setup_node(node)
+
         # Create and upload config file
         producer_prop_file = self.prop_file(node)
         if self.acks is not None:
             self.logger.info("VerifiableProducer (index = %d) will use acks = %s", idx, self.acks)
             producer_prop_file += "\nacks=%s\n" % self.acks
+
+        producer_prop_file += "\nrequest.timeout.ms=%d\n" % (self.request_timeout_sec * 1000)
         self.logger.info("verifiable_producer.properties:")
         self.logger.info(producer_prop_file)
         node.account.create_file(VerifiableProducer.CONFIG_FILE, producer_prop_file)
-        self.security_config.setup_node(node)
 
         cmd = self.start_cmd(node, idx)
         self.logger.debug("VerifiableProducer %d command: %s" % (idx, cmd))
@@ -114,45 +123,71 @@ class VerifiableProducer(KafkaPathResolverMixin, BackgroundThreadService):
         self.produced_count[idx] = 0
         last_produced_time = time.time()
         prev_msg = None
-        for line in node.account.ssh_capture(cmd):
-            line = line.strip()
+        node.account.ssh(cmd)
 
-            data = self.try_parse_json(line)
-            if data is not None:
+        # Ensure that STDOUT_CAPTURE exists before try to read from it
+        # Note that if max_messages is configured, it's possible for the process to exit before this
+        # wait_until condition is checked
+        start = time.time()
+        wait_until(lambda: node.account.isfile(VerifiableProducer.STDOUT_CAPTURE) and
+                           line_count(node, VerifiableProducer.STDOUT_CAPTURE) > 0,
+                   timeout_sec=10, err_msg="%s: VerifiableProducer took too long to start" % node.account)
+        self.logger.debug("%s: VerifiableProducer took %s seconds to start" % (node.account, time.time() - start))
 
-                with self.lock:
-                    if data["name"] == "producer_send_error":
-                        data["node"] = idx
-                        self.not_acked_values.append(self.message_validator(data["value"]))
-                        self.produced_count[idx] += 1
+        with node.account.open(VerifiableProducer.STDOUT_CAPTURE, 'r') as f:
+            while True:
+                line = f.readline()
+                if line == '' and not self.alive(node):
+                    # The process is gone, and we've reached the end of the output file, so we don't expect
+                    # any more output to appear in the STDOUT_CAPTURE file
+                    break
 
-                    elif data["name"] == "producer_send_success":
-                        self.acked_values.append(self.message_validator(data["value"]))
-                        self.produced_count[idx] += 1
+                line = line.strip()
 
-                        # Log information if there is a large gap between successively acknowledged messages
-                        t = time.time()
-                        time_delta_sec = t - last_produced_time
-                        if time_delta_sec > 2 and prev_msg is not None:
-                            self.logger.debug(
-                                "Time delta between successively acked messages is large: " +
-                                "delta_t_sec: %s, prev_message: %s, current_message: %s" % (str(time_delta_sec), str(prev_msg), str(data)))
+                data = self.try_parse_json(line)
+                if data is not None:
 
-                        last_produced_time = t
-                        prev_msg = data
+                    with self.lock:
+                        if data["name"] == "producer_send_error":
+                            data["node"] = idx
+                            self.not_acked_values.append(self.message_validator(data["value"]))
+                            self.produced_count[idx] += 1
 
-                    elif data["name"] == "shutdown_complete":
-                        if node in self.clean_shutdown_nodes:
-                            raise Exception("Unexpected shutdown event from producer, already shutdown. Producer index: %d" % idx)
-                        self.clean_shutdown_nodes.add(node)
+                        elif data["name"] == "producer_send_success":
+                            self.acked_values.append(self.message_validator(data["value"]))
+                            self.produced_count[idx] += 1
+
+                            # Log information if there is a large gap between successively acknowledged messages
+                            t = time.time()
+                            time_delta_sec = t - last_produced_time
+                            if time_delta_sec > 2 and prev_msg is not None:
+                                self.logger.debug(
+                                    "Time delta between successively acked messages is large: " +
+                                    "delta_t_sec: %s, prev_message: %s, current_message: %s" % (str(time_delta_sec), str(prev_msg), str(data)))
+
+                            last_produced_time = t
+                            prev_msg = data
+
+                        elif data["name"] == "shutdown_complete":
+                            if node in self.clean_shutdown_nodes:
+                                raise Exception("Unexpected shutdown event from producer, already shutdown. Producer index: %d" % idx)
+                            self.clean_shutdown_nodes.add(node)
+
+    def _has_output(self, node):
+        """Helper used as a proxy to determine whether jmx is running by that jmx_tool_log contains output."""
+        try:
+            node.account.ssh("test -z \"$(cat %s)\"" % VerifiableProducer.STDOUT_CAPTURE, allow_fail=False)
+            return False
+        except RemoteCommandError:
+            return True
 
     def start_cmd(self, node, idx):
         cmd = ""
         if node.version <= LATEST_0_8_2:
             # 0.8.2.X releases do not have VerifiableProducer.java, so cheat and add
-            # the tools jar from trunk to the classpath
-            tools_jar = self.path.jar(TOOLS_JAR_NAME, TRUNK)
-            tools_dependant_libs_jar = self.path.jar(TOOLS_DEPENDANT_TEST_LIBS_JAR_NAME, TRUNK)
+            # the tools jar from the development branch to the classpath
+            tools_jar = self.path.jar(TOOLS_JAR_NAME, DEV_BRANCH)
+            tools_dependant_libs_jar = self.path.jar(TOOLS_DEPENDANT_TEST_LIBS_JAR_NAME, DEV_BRANCH)
 
             cmd += "for file in %s; do CLASSPATH=$CLASSPATH:$file; done; " % tools_jar
             cmd += "for file in %s; do CLASSPATH=$CLASSPATH:$file; done; " % tools_dependant_libs_jar
@@ -171,10 +206,10 @@ class VerifiableProducer(KafkaPathResolverMixin, BackgroundThreadService):
         if self.message_validator == is_int_with_prefix:
             cmd += " --value-prefix %s" % str(idx)
         if self.acks is not None:
-            cmd += " --acks %s\n" % str(self.acks)
+            cmd += " --acks %s " % str(self.acks)
 
         cmd += " --producer.config %s" % VerifiableProducer.CONFIG_FILE
-        cmd += " 2>> %s | tee -a %s &" % (VerifiableProducer.STDOUT_CAPTURE, VerifiableProducer.STDOUT_CAPTURE)
+        cmd += " 2>> %s 1>> %s &" % (VerifiableProducer.STDERR_CAPTURE, VerifiableProducer.STDOUT_CAPTURE)
         return cmd
 
     def kill_node(self, node, clean_shutdown=True, allow_fail=False):
@@ -190,7 +225,7 @@ class VerifiableProducer(KafkaPathResolverMixin, BackgroundThreadService):
             cmd = "jps | grep -i VerifiableProducer | awk '{print $1}'"
             pid_arr = [pid for pid in node.account.ssh_capture(cmd, allow_fail=True, callback=int)]
             return pid_arr
-        except (subprocess.CalledProcessError, ValueError) as e:
+        except (RemoteCommandError, ValueError) as e:
             return []
 
     def alive(self, node):

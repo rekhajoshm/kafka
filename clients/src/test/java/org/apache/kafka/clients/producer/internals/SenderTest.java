@@ -205,7 +205,7 @@ public class SenderTest {
             sender.run(time.milliseconds()); // connect
             sender.run(time.milliseconds()); // send produce request
             String id = client.requests().peek().destination();
-            assertEquals(ApiKeys.PRODUCE.id, client.requests().peek().header().apiKey());
+            assertEquals(ApiKeys.PRODUCE, client.requests().peek().requestBuilder().apiKey());
             Node node = new Node(Integer.valueOf(id), "localhost", 0);
             assertEquals(1, client.inFlightRequestCount());
             assertTrue("Client ready status should be true", client.isReady(node, 0L));
@@ -272,7 +272,8 @@ public class SenderTest {
     }
 
     private ProduceResponse produceResponse(TopicPartition tp, long offset, int error, int throttleTimeMs) {
-        ProduceResponse.PartitionResponse resp = new ProduceResponse.PartitionResponse((short) error, offset, Record.NO_TIMESTAMP);
+        ProduceResponse.PartitionResponse resp = new ProduceResponse.PartitionResponse(Errors.forCode((short) error),
+                offset, Record.NO_TIMESTAMP);
         Map<TopicPartition, ProduceResponse.PartitionResponse> partResp = Collections.singletonMap(tp, resp);
         return new ProduceResponse(partResp, throttleTimeMs);
     }

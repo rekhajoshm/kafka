@@ -17,10 +17,14 @@
 
 package org.apache.kafka.streams.state.internals;
 
+import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.common.utils.Bytes;
+import org.apache.kafka.streams.KeyValue;
+import org.apache.kafka.streams.errors.InvalidStateStoreException;
 import org.apache.kafka.streams.kstream.internals.CacheFlushListener;
 import org.apache.kafka.streams.kstream.internals.Change;
+import org.apache.kafka.streams.processor.internals.MockStreamsMetrics;
 import org.apache.kafka.streams.processor.internals.ProcessorRecordContext;
 import org.apache.kafka.streams.processor.internals.RecordCollector;
 import org.apache.kafka.streams.state.KeyValueIterator;
@@ -30,6 +34,7 @@ import org.junit.Test;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -42,23 +47,22 @@ import static org.junit.Assert.assertNull;
 
 public class CachingKeyValueStoreTest {
 
+    private final int maxCacheSizeBytes = 150;
     private CachingKeyValueStore<String, String> store;
     private InMemoryKeyValueStore<Bytes, byte[]> underlyingStore;
     private ThreadCache cache;
-    private int maxCacheSizeBytes;
     private CacheFlushListenerStub<String> cacheFlushListener;
     private String topic;
 
     @Before
     public void setUp() throws Exception {
         final String storeName = "store";
-        underlyingStore = new InMemoryKeyValueStore<>(storeName);
+        underlyingStore = new InMemoryKeyValueStore<>(storeName, Serdes.Bytes(), Serdes.ByteArray());
         cacheFlushListener = new CacheFlushListenerStub<>();
         store = new CachingKeyValueStore<>(underlyingStore, Serdes.String(), Serdes.String());
         store.setFlushListener(cacheFlushListener);
-        maxCacheSizeBytes = 150;
-        cache = new ThreadCache(maxCacheSizeBytes);
-        final MockProcessorContext context = new MockProcessorContext(null, null, null, null, (RecordCollector) null, cache);
+        cache = new ThreadCache("testCache", maxCacheSizeBytes, new MockStreamsMetrics(new Metrics()));
+        final MockProcessorContext context = new MockProcessorContext(null, null, null, (RecordCollector) null, cache);
         topic = "topic";
         context.setRecordContext(new ProcessorRecordContext(10, 0, 0, topic));
         store.init(context, null);
@@ -147,6 +151,67 @@ public class CachingKeyValueStoreTest {
         assertNull(store.get("a"));
         assertFalse(store.range("a", "b").hasNext());
         assertFalse(store.all().hasNext());
+    }
+
+    @Test
+    public void shouldClearNamespaceCacheOnClose() throws Exception {
+        store.put("a", "a");
+        assertEquals(1, cache.size());
+        store.close();
+        assertEquals(0, cache.size());
+    }
+
+    @Test(expected = InvalidStateStoreException.class)
+    public void shouldThrowIfTryingToGetFromClosedCachingStore() throws Exception {
+        store.close();
+        store.get("a");
+    }
+
+    @Test(expected = InvalidStateStoreException.class)
+    public void shouldThrowIfTryingToWriteToClosedCachingStore() throws Exception {
+        store.close();
+        store.put("a", "a");
+    }
+
+    @Test(expected = InvalidStateStoreException.class)
+    public void shouldThrowIfTryingToDoRangeQueryOnClosedCachingStore() throws Exception {
+        store.close();
+        store.range("a", "b");
+    }
+
+    @Test(expected = InvalidStateStoreException.class)
+    public void shouldThrowIfTryingToDoAllQueryOnClosedCachingStore() throws Exception {
+        store.close();
+        store.all();
+    }
+
+    @Test(expected = InvalidStateStoreException.class)
+    public void shouldThrowIfTryingToDoGetApproxSizeOnClosedCachingStore() throws Exception {
+        store.close();
+        store.approximateNumEntries();
+    }
+
+    @Test(expected = InvalidStateStoreException.class)
+    public void shouldThrowIfTryingToDoPutAllClosedCachingStore() throws Exception {
+        store.close();
+        store.putAll(Collections.singletonList(KeyValue.pair("a", "a")));
+    }
+
+    @Test(expected = InvalidStateStoreException.class)
+    public void shouldThrowIfTryingToDoPutIfAbsentClosedCachingStore() throws Exception {
+        store.close();
+        store.putIfAbsent("b", "c");
+    }
+
+    @Test(expected = InvalidStateStoreException.class)
+    public void shouldThrowIfTryingToDeleteFromClosedCachingStore() throws Exception {
+        store.close();
+        store.delete("key");
+    }
+
+    @Test
+    public void shouldReturnNullIfKeyIsNull() throws Exception {
+        assertNull(store.get(null));
     }
 
     private int addItemsToCache() throws IOException {

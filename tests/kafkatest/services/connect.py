@@ -304,7 +304,8 @@ class VerifiableConnector(object):
                     self.logger.debug("Ignoring unparseable line: %s", line)
                     continue
                 # Filter to only ones matching our name to support multiple verifiable producers
-                if data['name'] != self.name: continue
+                if data['name'] != self.name:
+                    continue
                 data['node'] = node
                 records.append(data)
         return records
@@ -326,6 +327,12 @@ class VerifiableSource(VerifiableConnector):
         self.tasks = tasks
         self.topic = topic
         self.throughput = throughput
+
+    def committed_messages(self):
+        return filter(lambda m: 'committed' in m and m['committed'], self.messages())
+
+    def sent_messages(self):
+        return filter(lambda m: 'committed' not in m or not m['committed'], self.messages())
 
     def start(self):
         self.logger.info("Creating connector VerifiableSourceConnector %s", self.name)
