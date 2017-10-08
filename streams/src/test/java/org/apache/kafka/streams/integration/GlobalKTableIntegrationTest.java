@@ -1,16 +1,18 @@
-/**
- * Licensed to the Apache Software Foundation (ASF) under one or more contributor license
- * agreements.  See the NOTICE file distributed with this work for additional information regarding
- * copyright ownership. The ASF licenses this file to You under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance with the License.  You may obtain a
- * copy of the License at
- * <p>
- * http://www.apache.org/licenses/LICENSE-2.0
- * <p>
- * Unless required by applicable law or agreed to in writing, software distributed under the License
- * is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
- * or implied. See the License for the specific language governing permissions and limitations under
- * the License.
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 package org.apache.kafka.streams.integration;
 
@@ -19,26 +21,32 @@ import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.common.serialization.LongSerializer;
 import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.common.serialization.StringSerializer;
+import org.apache.kafka.common.utils.Bytes;
+import org.apache.kafka.streams.Consumed;
 import org.apache.kafka.streams.KafkaStreams;
 import org.apache.kafka.streams.KeyValue;
+import org.apache.kafka.streams.StreamsBuilder;
 import org.apache.kafka.streams.StreamsConfig;
 import org.apache.kafka.streams.integration.utils.EmbeddedKafkaCluster;
 import org.apache.kafka.streams.integration.utils.IntegrationTestUtils;
 import org.apache.kafka.streams.kstream.ForeachAction;
 import org.apache.kafka.streams.kstream.GlobalKTable;
 import org.apache.kafka.streams.kstream.KStream;
-import org.apache.kafka.streams.kstream.KStreamBuilder;
 import org.apache.kafka.streams.kstream.KTable;
 import org.apache.kafka.streams.kstream.KeyValueMapper;
+import org.apache.kafka.streams.kstream.Materialized;
 import org.apache.kafka.streams.kstream.ValueJoiner;
+import org.apache.kafka.streams.state.KeyValueStore;
 import org.apache.kafka.streams.state.QueryableStoreTypes;
 import org.apache.kafka.streams.state.ReadOnlyKeyValueStore;
+import org.apache.kafka.test.IntegrationTest;
 import org.apache.kafka.test.TestCondition;
 import org.apache.kafka.test.TestUtils;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.ClassRule;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import java.io.IOException;
 import java.util.Arrays;
@@ -46,6 +54,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
 
+@Category({IntegrationTest.class})
 public class GlobalKTableIntegrationTest {
     private static final int NUM_BROKERS = 1;
 
@@ -67,7 +76,7 @@ public class GlobalKTableIntegrationTest {
             return value1 + "+" + value2;
         }
     };
-    private KStreamBuilder builder;
+    private StreamsBuilder builder;
     private Properties streamsConfiguration;
     private KafkaStreams kafkaStreams;
     private String globalOne;
@@ -83,7 +92,7 @@ public class GlobalKTableIntegrationTest {
     @Before
     public void before() throws InterruptedException {
         testNo++;
-        builder = new KStreamBuilder();
+        builder = new StreamsBuilder();
         createTopics();
         streamsConfiguration = new Properties();
         final String applicationId = "globalOne-table-test-" + testNo;
@@ -93,9 +102,15 @@ public class GlobalKTableIntegrationTest {
         streamsConfiguration.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
         streamsConfiguration.put(StreamsConfig.STATE_DIR_CONFIG, TestUtils.tempDirectory().getPath());
         streamsConfiguration.put(StreamsConfig.CACHE_MAX_BYTES_BUFFERING_CONFIG, 0);
-        globalTable = builder.globalTable(Serdes.Long(), Serdes.String(), globalOne, globalStore);
-        stream = builder.stream(Serdes.String(), Serdes.Long(), inputStream);
-        table = builder.table(Serdes.String(), Serdes.Long(), inputTable, "table");
+        streamsConfiguration.put(IntegrationTestUtils.INTERNAL_LEAVE_GROUP_ON_CLOSE, true);
+        streamsConfiguration.put(StreamsConfig.COMMIT_INTERVAL_MS_CONFIG, 100);
+        globalTable = builder.globalTable(globalOne, Consumed.with(Serdes.Long(), Serdes.String()),
+                                          Materialized.<Long, String, KeyValueStore<Bytes, byte[]>>as(globalStore)
+                                                  .withKeySerde(Serdes.Long())
+                                                  .withValueSerde(Serdes.String()));
+        final Consumed<String, Long> stringLongConsumed = Consumed.with(Serdes.String(), Serdes.Long());
+        stream = builder.stream(inputStream, stringLongConsumed);
+        table = builder.table(inputTable, stringLongConsumed);
         foreachAction = new ForeachAction<String, String>() {
             @Override
             public void apply(final String key, final String value) {
@@ -215,17 +230,16 @@ public class GlobalKTableIntegrationTest {
         inputStream = "input-stream-" + testNo;
         inputTable = "input-table-" + testNo;
         globalOne = "globalOne-" + testNo;
-        CLUSTER.createTopic(inputStream);
-        CLUSTER.createTopic(inputTable);
+        CLUSTER.createTopics(inputStream, inputTable);
         CLUSTER.createTopic(globalOne, 2, 1);
     }
 
     private void startStreams() {
-        kafkaStreams = new KafkaStreams(builder, streamsConfiguration);
+        kafkaStreams = new KafkaStreams(builder.build(), streamsConfiguration);
         kafkaStreams.start();
     }
 
-    private void produceTopicValues(final String topic) throws java.util.concurrent.ExecutionException, InterruptedException {
+    private void produceTopicValues(final String topic) throws Exception {
         IntegrationTestUtils.produceKeyValuesSynchronously(
                 topic,
                 Arrays.asList(
@@ -242,7 +256,7 @@ public class GlobalKTableIntegrationTest {
                 mockTime);
     }
 
-    private void produceInitialGlobalTableValues() throws java.util.concurrent.ExecutionException, InterruptedException {
+    private void produceInitialGlobalTableValues() throws Exception {
         IntegrationTestUtils.produceKeyValuesSynchronously(
                 globalOne,
                 Arrays.asList(
@@ -258,7 +272,7 @@ public class GlobalKTableIntegrationTest {
                 mockTime);
     }
 
-    private void produceGlobalTableValues() throws java.util.concurrent.ExecutionException, InterruptedException {
+    private void produceGlobalTableValues() throws Exception {
         IntegrationTestUtils.produceKeyValuesSynchronously(
                 globalOne,
                 Arrays.asList(

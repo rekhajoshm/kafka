@@ -1,24 +1,24 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
+ * contributor license agreements. See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
  * The ASF licenses this file to You under the Apache License, Version 2.0
  * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
- * <p>
- * http://www.apache.org/licenses/LICENSE-2.0
- * <p>
+ * the License. You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.kafka.streams.kstream.internals;
 
 import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.serialization.Serdes;
+import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.streams.KeyValue;
 import org.apache.kafka.streams.kstream.Aggregator;
 import org.apache.kafka.streams.kstream.Initializer;
@@ -48,7 +48,6 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
-@SuppressWarnings("unchecked")
 public class KStreamSessionWindowAggregateProcessorTest {
 
     private static final long GAP_MS = 5 * 60 * 1000L;
@@ -85,12 +84,11 @@ public class KStreamSessionWindowAggregateProcessorTest {
     private MockProcessorContext context;
 
 
-    @SuppressWarnings("unchecked")
     @Before
     public void initializeStore() {
         final File stateDir = TestUtils.tempDirectory();
         context = new MockProcessorContext(stateDir,
-            Serdes.String(), Serdes.String(), new NoOpRecordCollector(), new ThreadCache("testCache", 100000, new MockStreamsMetrics(new Metrics()))) {
+            Serdes.String(), Serdes.String(), new NoOpRecordCollector(), new ThreadCache(new LogContext("testCache "), 100000, new MockStreamsMetrics(new Metrics()))) {
             @Override
             public <K, V> void forward(final K key, final V value) {
                 results.add(KeyValue.pair(key, value));
@@ -116,11 +114,12 @@ public class KStreamSessionWindowAggregateProcessorTest {
 
     @After
     public void closeStore() {
+        context.close();
         sessionStore.close();
     }
 
     @Test
-    public void shouldCreateSingleSessionWhenWithinGap() throws Exception {
+    public void shouldCreateSingleSessionWhenWithinGap() {
         context.setTime(0);
         processor.process("john", "first");
         context.setTime(500);
@@ -133,7 +132,7 @@ public class KStreamSessionWindowAggregateProcessorTest {
 
 
     @Test
-    public void shouldMergeSessions() throws Exception {
+    public void shouldMergeSessions() {
         context.setTime(0);
         final String sessionId = "mel";
         processor.process(sessionId, "first");
@@ -157,7 +156,7 @@ public class KStreamSessionWindowAggregateProcessorTest {
     }
 
     @Test
-    public void shouldUpdateSessionIfTheSameTime() throws Exception {
+    public void shouldUpdateSessionIfTheSameTime() {
         context.setTime(0);
         processor.process("mel", "first");
         processor.process("mel", "second");
@@ -167,7 +166,7 @@ public class KStreamSessionWindowAggregateProcessorTest {
     }
 
     @Test
-    public void shouldHaveMultipleSessionsForSameIdWhenTimestampApartBySessionGap() throws Exception {
+    public void shouldHaveMultipleSessionsForSameIdWhenTimestampApartBySessionGap() {
         final String sessionId = "mel";
         long time = 0;
         context.setTime(time);
@@ -192,7 +191,7 @@ public class KStreamSessionWindowAggregateProcessorTest {
 
 
     @Test
-    public void shouldRemoveMergedSessionsFromStateStore() throws Exception {
+    public void shouldRemoveMergedSessionsFromStateStore() {
         context.setTime(0);
         processor.process("a", "1");
 
@@ -210,7 +209,7 @@ public class KStreamSessionWindowAggregateProcessorTest {
     }
 
     @Test
-    public void shouldHandleMultipleSessionsAndMerging() throws Exception {
+    public void shouldHandleMultipleSessionsAndMerging() {
         context.setTime(0);
         processor.process("a", "1");
         processor.process("b", "1");
@@ -240,7 +239,7 @@ public class KStreamSessionWindowAggregateProcessorTest {
 
 
     @Test
-    public void shouldGetAggregatedValuesFromValueGetter() throws Exception {
+    public void shouldGetAggregatedValuesFromValueGetter() {
         final KTableValueGetter<Windowed<String>, Long> getter = sessionAggregator.view().get();
         getter.init(context);
         context.setTime(0);
@@ -255,7 +254,7 @@ public class KStreamSessionWindowAggregateProcessorTest {
     }
 
     @Test
-    public void shouldImmediatelyForwardNewSessionWhenNonCachedStore() throws Exception {
+    public void shouldImmediatelyForwardNewSessionWhenNonCachedStore() {
         initStore(false);
         processor.init(context);
 
@@ -270,7 +269,7 @@ public class KStreamSessionWindowAggregateProcessorTest {
     }
 
     @Test
-    public void shouldImmediatelyForwardRemovedSessionsWhenMerging() throws Exception {
+    public void shouldImmediatelyForwardRemovedSessionsWhenMerging() {
         initStore(false);
         processor.init(context);
 

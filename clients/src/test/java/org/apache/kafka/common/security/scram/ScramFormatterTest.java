@@ -1,10 +1,10 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
+ * contributor license agreements. See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
  * The ASF licenses this file to You under the Apache License, Version 2.0
  * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
+ * the License. You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -14,12 +14,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.kafka.common.security.scram;
 
+import org.apache.kafka.common.utils.Base64;
 import org.junit.Test;
-
-import javax.xml.bind.DatatypeConverter;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
@@ -56,13 +54,13 @@ public class ScramFormatterTest {
         String serverNonce = serverFirst.nonce().substring(clientNonce.length());
         assertEquals("%hvYDpWUa2RaTCAfuxFIlj)hNlF$k0", serverNonce);
         byte[] salt = serverFirst.salt();
-        assertArrayEquals(DatatypeConverter.parseBase64Binary("W22ZaJ0SNY7soEsUEjb6gQ=="), salt);
+        assertArrayEquals(Base64.decoder().decode("W22ZaJ0SNY7soEsUEjb6gQ=="), salt);
         int iterations = serverFirst.iterations();
         assertEquals(4096, iterations);
         byte[] channelBinding = clientFinal.channelBinding();
-        assertArrayEquals(DatatypeConverter.parseBase64Binary("biws"), channelBinding);
+        assertArrayEquals(Base64.decoder().decode("biws"), channelBinding);
         byte[] serverSignature = serverFinal.serverSignature();
-        assertArrayEquals(DatatypeConverter.parseBase64Binary("6rriTRBi23WpRR/wtup+mMhUZUn/dB5nLTJRsjl95G4="), serverSignature);
+        assertArrayEquals(Base64.decoder().decode("6rriTRBi23WpRR/wtup+mMhUZUn/dB5nLTJRsjl95G4="), serverSignature);
 
         byte[] saltedPassword = formatter.saltedPassword(password, salt, iterations);
         byte[] serverKey = formatter.serverKey(saltedPassword);

@@ -1,10 +1,10 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
+ * contributor license agreements. See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
  * The ASF licenses this file to You under the Apache License, Version 2.0
  * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
+ * the License. You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -14,15 +14,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.kafka.streams.kstream.internals;
 
 import org.apache.kafka.clients.producer.internals.DefaultPartitioner;
 import org.apache.kafka.common.Cluster;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.PartitionInfo;
-import org.apache.kafka.common.serialization.ByteArraySerializer;
 import org.apache.kafka.common.serialization.ByteArrayDeserializer;
+import org.apache.kafka.common.serialization.ByteArraySerializer;
 import org.apache.kafka.common.serialization.IntegerSerializer;
 import org.apache.kafka.common.serialization.Serializer;
 import org.apache.kafka.common.serialization.StringSerializer;
@@ -70,7 +69,7 @@ public class WindowedStreamPartitionerTest {
         DefaultPartitioner defaultPartitioner = new DefaultPartitioner();
 
         WindowedSerializer<Integer> windowedSerializer = new WindowedSerializer<>(intSerializer);
-        WindowedStreamPartitioner<Integer, String> streamPartitioner = new WindowedStreamPartitioner<>(windowedSerializer);
+        WindowedStreamPartitioner<Integer, String> streamPartitioner = new WindowedStreamPartitioner<>(topicName, windowedSerializer);
 
         for (int k = 0; k < 10; k++) {
             Integer key = rand.nextInt();
@@ -90,8 +89,10 @@ public class WindowedStreamPartitionerTest {
                 assertEquals(expected, actual);
             }
         }
-    }
 
+        defaultPartitioner.close();
+    }
+    
     @Test
     public void testWindowedSerializerNoArgConstructors() {
         Map<String, String> props = new HashMap<>();
@@ -114,12 +115,13 @@ public class WindowedStreamPartitionerTest {
         Serializer<?> inner1 = windowedSerializer1.innerSerializer();
         assertNotNull("Inner serializer should be not null", inner1);
         assertTrue("Inner serializer type should be ByteArraySerializer", inner1 instanceof ByteArraySerializer);
+        windowedSerializer.close();
+        windowedSerializer1.close();
     }
-
+    
     @Test
     public void testWindowedDeserializerNoArgConstructors() {
         Map<String, String> props = new HashMap<>();
-        // test key[value].deserializer.inner.class takes precedence over serializer.inner.class
         WindowedDeserializer<StringSerializer> windowedDeserializer = new WindowedDeserializer<>();
         props.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, "host:1");
         props.put(StreamsConfig.APPLICATION_ID_CONFIG, "appId");
@@ -135,8 +137,25 @@ public class WindowedStreamPartitionerTest {
         props.remove("value.deserializer.inner.class");
         WindowedDeserializer<?> windowedDeserializer1 = new WindowedDeserializer<>();
         windowedDeserializer1.configure(props, false);
-        Deserializer<?> inner1 = windowedDeserializer1.innerDeserializer();
+        final Deserializer<?> inner1 = windowedDeserializer1.innerDeserializer();
         assertNotNull("Inner deserializer should be not null", inner1);
         assertTrue("Inner deserializer type should be ByteArrayDeserializer", inner1 instanceof ByteArrayDeserializer);
+        windowedDeserializer.close();
+        windowedDeserializer1.close();
+    }
+    
+    @Test
+    public void testWindowDeserializeExpectedWindowSize() {
+        final long randomLong = 5000000;
+        final Map<String, String> props = new HashMap<>();
+        final WindowedDeserializer<StringSerializer> windowedDeserializer = new WindowedDeserializer<>(randomLong);
+        props.put("key.deserializer.inner.class", "org.apache.kafka.common.serialization.StringDeserializer");
+        windowedDeserializer.configure(props, true);
+        //test for deserializer expected window end time
+        final byte[] byteValues = stringSerializer.serialize(topicName, "dummy string"); //dummy string, serves no real purpose
+        final Windowed<?> windowed = windowedDeserializer.deserialize(topicName, byteValues);
+        final long actualSize = windowed.window().end() - windowed.window().start(); //find actual window time
+        assertEquals(randomLong, actualSize); //testing if window size matches up with expected one
+        windowedDeserializer.close();
     }
 }

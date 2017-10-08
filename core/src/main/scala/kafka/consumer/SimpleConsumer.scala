@@ -26,11 +26,14 @@ import kafka.network._
 import kafka.utils._
 import kafka.common.{ErrorMapping, TopicAndPartition}
 import org.apache.kafka.common.network.{NetworkReceive}
+import org.apache.kafka.common.protocol.Errors
 import org.apache.kafka.common.utils.Utils._
 
 /**
  * A consumer of kafka messages
  */
+@deprecated("This class has been deprecated and will be removed in a future release. " +
+            "Please use org.apache.kafka.clients.consumer.KafkaConsumer instead.", "0.11.0.0")
 @threadsafe
 class SimpleConsumer(val host: String,
                      val port: Int,
@@ -187,8 +190,8 @@ class SimpleConsumer(val host: String,
                                 replicaId = consumerId)
     val partitionErrorAndOffset = getOffsetsBefore(request).partitionErrorAndOffsets(topicAndPartition)
     val offset = partitionErrorAndOffset.error match {
-      case ErrorMapping.NoError => partitionErrorAndOffset.offsets.head
-      case _ => throw ErrorMapping.exceptionFor(partitionErrorAndOffset.error)
+      case Errors.NONE => partitionErrorAndOffset.offsets.head
+      case _ => throw ErrorMapping.exceptionFor(partitionErrorAndOffset.error.code)
     }
     offset
   }

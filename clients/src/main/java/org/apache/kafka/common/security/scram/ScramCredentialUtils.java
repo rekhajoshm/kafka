@@ -1,13 +1,12 @@
-/**
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -15,15 +14,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.kafka.common.security.scram;
 
 import java.util.Collection;
 import java.util.Properties;
 
-import javax.xml.bind.DatatypeConverter;
-
 import org.apache.kafka.common.security.authenticator.CredentialCache;
+import org.apache.kafka.common.utils.Base64;
 
 /**
  * SCRAM Credential persistence utility functions. Implements format conversion used
@@ -43,11 +40,11 @@ public class ScramCredentialUtils {
     public static String credentialToString(ScramCredential credential) {
         return String.format("%s=%s,%s=%s,%s=%s,%s=%d",
                SALT,
-               DatatypeConverter.printBase64Binary(credential.salt()),
+               Base64.encoder().encodeToString(credential.salt()),
                STORED_KEY,
-               DatatypeConverter.printBase64Binary(credential.storedKey()),
+                Base64.encoder().encodeToString(credential.storedKey()),
                SERVER_KEY,
-               DatatypeConverter.printBase64Binary(credential.serverKey()),
+                Base64.encoder().encodeToString(credential.serverKey()),
                ITERATIONS,
                credential.iterations());
     }
@@ -58,9 +55,9 @@ public class ScramCredentialUtils {
                 !props.containsKey(SERVER_KEY) || !props.containsKey(ITERATIONS)) {
             throw new IllegalArgumentException("Credentials not valid: " + str);
         }
-        byte[] salt = DatatypeConverter.parseBase64Binary(props.getProperty(SALT));
-        byte[] storedKey = DatatypeConverter.parseBase64Binary(props.getProperty(STORED_KEY));
-        byte[] serverKey = DatatypeConverter.parseBase64Binary(props.getProperty(SERVER_KEY));
+        byte[] salt = Base64.decoder().decode(props.getProperty(SALT));
+        byte[] storedKey = Base64.decoder().decode(props.getProperty(STORED_KEY));
+        byte[] serverKey = Base64.decoder().decode(props.getProperty(SERVER_KEY));
         int iterations = Integer.parseInt(props.getProperty(ITERATIONS));
         return new ScramCredential(salt, storedKey, serverKey, iterations);
     }

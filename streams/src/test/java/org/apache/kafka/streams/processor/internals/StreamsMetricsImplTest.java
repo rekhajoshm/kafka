@@ -1,13 +1,13 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
+ * contributor license agreements. See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
  * The ASF licenses this file to You under the Apache License, Version 2.0
  * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
- * <p>
- * http://www.apache.org/licenses/LICENSE-2.0
- * <p>
+ * the License. You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -31,7 +31,7 @@ import static org.junit.Assert.assertEquals;
 public class StreamsMetricsImplTest {
 
     @Test(expected = NullPointerException.class)
-    public void testNullMetrics() throws Exception {
+    public void testNullMetrics() {
         String groupName = "doesNotMatter";
         Map<String, String> tags = new HashMap<>();
         StreamsMetricsImpl streamsMetrics = new StreamsMetricsImpl(null, groupName, tags);
@@ -80,8 +80,10 @@ public class StreamsMetricsImplTest {
         Sensor sensor1 = streamsMetrics.addLatencyAndThroughputSensor(scope, entity, operation, Sensor.RecordingLevel.DEBUG);
 
         Map<MetricName, ? extends Metric> metrics = streamsMetrics.metrics();
-        // 6 metrics plus a common metric that keeps track of total registered metrics in Metrics() constructor
-        assertEquals(metrics.size(), 7);
+        // 2 meters and 4 non-meter metrics plus a common metric that keeps track of total registered metrics in Metrics() constructor
+        int meterMetricsCount = 2; // Each Meter is a combination of a Rate and a Total
+        int otherMetricsCount = 4;
+        assertEquals(meterMetricsCount * 2 + otherMetricsCount + 1, metrics.size());
 
         streamsMetrics.removeSensor(sensor1);
         metrics = streamsMetrics.metrics();
@@ -100,8 +102,9 @@ public class StreamsMetricsImplTest {
         Sensor sensor1 = streamsMetrics.addThroughputSensor(scope, entity, operation, Sensor.RecordingLevel.DEBUG);
 
         Map<MetricName, ? extends Metric> metrics = streamsMetrics.metrics();
-        // 2 metrics plus a common metric that keeps track of total registered metrics in Metrics() constructor
-        assertEquals(metrics.size(), 3);
+        int meterMetricsCount = 2; // Each Meter is a combination of a Rate and a Total
+        // 2 meter metrics plus a common metric that keeps track of total registered metrics in Metrics() constructor
+        assertEquals(meterMetricsCount * 2 + 1, metrics.size());
 
         streamsMetrics.removeSensor(sensor1);
         metrics = streamsMetrics.metrics();

@@ -28,12 +28,12 @@ import scala.collection._
 
 object FetchResponsePartitionData {
   def readFrom(buffer: ByteBuffer): FetchResponsePartitionData = {
-    val error = buffer.getShort
+    val error = Errors.forCode(buffer.getShort)
     val hw = buffer.getLong
     val messageSetSize = buffer.getInt
     val messageSetBuffer = buffer.slice()
     messageSetBuffer.limit(messageSetSize)
-    buffer.position(buffer.position + messageSetSize)
+    buffer.position(buffer.position() + messageSetSize)
     new FetchResponsePartitionData(error, hw, new ByteBufferMessageSet(messageSetBuffer))
   }
 
@@ -43,7 +43,7 @@ object FetchResponsePartitionData {
     4 /* messageSetSize */
 }
 
-case class FetchResponsePartitionData(error: Short = Errors.NONE.code, hw: Long = -1L, messages: MessageSet) {
+case class FetchResponsePartitionData(error: Errors = Errors.NONE, hw: Long = -1L, messages: MessageSet) {
   val sizeInBytes = FetchResponsePartitionData.headerSize + messages.sizeInBytes
 }
 
@@ -73,6 +73,7 @@ case class TopicData(topic: String, partitionData: Seq[(Int, FetchResponsePartit
   val headerSize = TopicData.headerSize(topic)
 }
 
+@deprecated("This object has been deprecated and will be removed in a future release.", "1.0.0")
 object FetchResponse {
 
   // The request version is used to determine which fields we can expect in the response
@@ -115,6 +116,7 @@ object FetchResponse {
   }
 }
 
+@deprecated("This object has been deprecated and will be removed in a future release.", "1.0.0")
 case class FetchResponse(correlationId: Int,
                          data: Seq[(TopicAndPartition, FetchResponsePartitionData)],
                          requestVersion: Int = 0,
@@ -166,7 +168,7 @@ case class FetchResponse(correlationId: Int,
 
   def highWatermark(topic: String, partition: Int) = partitionDataFor(topic, partition).hw
 
-  def hasError = dataByTopicAndPartition.values.exists(_.error != Errors.NONE.code)
+  def hasError = dataByTopicAndPartition.values.exists(_.error != Errors.NONE)
 
-  def errorCode(topic: String, partition: Int) = partitionDataFor(topic, partition).error
+  def error(topic: String, partition: Int) = partitionDataFor(topic, partition).error
 }
